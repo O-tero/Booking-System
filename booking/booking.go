@@ -2,7 +2,7 @@ package booking
 
 import (
 	"context"
-	"slices"
+	"encore.app/sendgrid"
 	"time"
 
 	"encore.app/booking/db"
@@ -12,6 +12,8 @@ import (
 	"encore.dev/beta/errs"
 	"encore.dev/storage/sqldb"
 )
+
+const DefaultBookingDuration = 1 * time.Hour
 
 var (
 	bookingDB = sqldb.NewDatabase("booking", sqldb.DatabaseConfig{
@@ -74,13 +76,29 @@ func Book(ctx context.Context, p *BookParams) error {
 	if err := tx.Commit(ctx); err != nil {
 		return eb.Cause(err).Code(errs.Unavailable).Msg("failed to commit transaction").Err()
 	}
+
+	formattedTime := pgtype.Timestamp{Time: p.Start, Valid: true}.Time.Format("2006-01-02 15:04")
+	_, err = sendgrid.Send(ctx, &sendgrid.SendParams{
+		From: sendgrid.Address{
+			Name:  "<your name>",
+			Email: "<your email>",
+		},
+		To: sendgrid.Address{
+			Email: p.Email,
+		},
+		Subject: "Booking Confirmation",
+		Text:    "Thank you for your booking!\nWe look forward to seeing you soon at " + formattedTime,
+		Html:    "",
+	})
+
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
-func listBookingsBetween(
-	ctx context.Context,
-	start, end time.Time,
-) ([]*Booking, error) {
+func listBookingsBetween(ctx context.Context, start, end time.Time) ([]*Booking, error) {
 	rows, err := query.ListBookingsBetween(ctx, db.ListBookingsBetweenParams{
 		StartTime: pgtype.Timestamp{Time: start, Valid: true},
 		EndTime:   pgtype.Timestamp{Time: end, Valid: true},
@@ -100,26 +118,30 @@ func listBookingsBetween(
 	return bookings, nil
 }
 
-func filterBookableSlots(
-	slots []BookableSlot,
-	now time.Time,
-	bookings []*Booking,
-) []BookableSlot {
-	// Remove slots for which the start time has already passed.
-	slots = slices.DeleteFunc(slots, func(s BookableSlot) bool {
-		// Has the slot already passed?
-		if s.Start.Before(now) {
-			return true
-		}
+type ListBookingsResponse struct {
+	Booking []*Booking `json:"bookings"`
+}
 
-		// Is there a booking that overlaps with this slot?
-		for _, b := range bookings {
-			if b.Start.Before(s.End) && b.End.After(s.Start) {
-				return true
-			}
-		}
+//encore:api auth method=GET path=/booking
+func ListBookings(ctx context.Context) (*ListBookingsResponse, error) {
+	rows, err := query.ListBookings(ctx)
+	if err != nil {
+		return nil, err
+	}
 
-		return false
-	})
-	return slots
+	var bookings []*Booking
+	for _, row := range rows {
+		bookings = append(bookings, &Booking{
+			ID:    row.ID,
+			Start: row.StartTime.Time,
+			End:   row.EndTime.Time,
+			Email: row.Email,
+		})
+	}
+	return &ListBookingsResponse{Booking: bookings}, nil
+}
+
+//encore:api auth method=DELETE path=/booking/:id
+func DeleteBooking(ctx context.Context, id int64) error {
+	return query.DeleteBooking(ctx, id)
 }

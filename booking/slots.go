@@ -2,20 +2,19 @@ package booking
 
 import (
 	"context"
-	"github.com/jackc/pgx/v5/pgtype"
+	"errors"
+	"slices"
 	"time"
 )
 
-const DefaultBookingDuration = 1 * time.Hour
-
 type BookableSlot struct {
 	Start time.Time `json:"start"`
-	End time.Time `json:"end"`
+	End   time.Time `json:"end"`
 }
 
 type SlotsParams struct{}
 
-type SlotsResponse struct { Slots []BookableSlot }
+type SlotsResponse struct{ Slots []BookableSlot }
 
 //encore:api public method=GET path=/slots/:from
 func GetBookableSlots(ctx context.Context, from string) (*SlotsResponse, error) {
@@ -85,4 +84,24 @@ func bookableSlotsForDay(date time.Time, avail *Availability) ([]BookableSlot, e
 	}
 
 	return slots, nil
+}
+
+func filterBookableSlots(slots []BookableSlot, now time.Time, bookings []*Booking) []BookableSlot {
+	// Remove slots for which the start time has already passed.
+	slots = slices.DeleteFunc(slots, func(s BookableSlot) bool {
+		// Has the slot already passed?
+		if s.Start.Before(now) {
+			return true
+		}
+
+		// Is there a booking that overlaps with this slot?
+		for _, b := range bookings {
+			if b.Start.Before(s.End) && b.End.After(s.Start) {
+				return true
+			}
+		}
+
+		return false
+	})
+	return slots
 }

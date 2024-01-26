@@ -3,11 +3,8 @@ package booking
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"encore.app/booking/db"
-	"github.com/jackc/pgx/v5/pgtype"
-
 	"encore.dev/beta/errs"
 	"encore.dev/rlog"
 )
